@@ -21,7 +21,7 @@ bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream) {
     return numRead < count;
 }
 
-bool readOrExit(unsigned char *buffer, size_t count, FILE *stream) {
+void readOrExit(unsigned char *buffer, size_t count, FILE *stream) {
     if (readWithErrors(buffer, count, stream)) {
         exit(EXIT_FAILURE);
     }
@@ -63,6 +63,13 @@ int readVariableLength(unsigned char destination[4], FILE *stream) {
             // MSB is unset for the final byte of a VLQ
             return i + 1;
         }
+    }
+}
+
+int readVariableLengthOrExit(unsigned char destination[4], FILE *stream) {
+    int result = readVariableLength(destination, stream);
+    if (result == -1) {
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -250,10 +257,7 @@ int main(int argc, char *argv[]) {
         chunkIndex = 0;
 
         while (chunkIndex < chunkLength) {
-            bytesRead = readVariableLength(fourBytes, filePtr);
-            if (bytesRead == -1) {
-                return 1;
-            }
+            bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
 
             printPaddedHexString(fourBytes, bytesRead);
 
@@ -274,10 +278,7 @@ int main(int argc, char *argv[]) {
 
                 printf("\tMeta event (%s)\n", metaEventToString(twoBytes[1]));
 
-                bytesRead = readVariableLength(fourBytes, filePtr);
-                if (bytesRead == -1) {
-                    return 1;
-                }
+                bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
 
                 printPaddedHexString(fourBytes, bytesRead);
 
@@ -310,10 +311,7 @@ int main(int argc, char *argv[]) {
                 printPaddedHexString(twoBytes, 1);
                 printf("\tsysex event\n");
 
-                bytesRead = readVariableLength(fourBytes, filePtr);
-                if (bytesRead == -1) {
-                    return 1;
-                }
+                bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
 
                 printPaddedHexString(fourBytes, bytesRead);
 
