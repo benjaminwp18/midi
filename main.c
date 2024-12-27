@@ -95,6 +95,8 @@ static const char FORMATS[][13] = {
     "patterns"
 };
 
+unsigned char readBuffer[4];
+
 const char* metaEventToString(unsigned char metaEvent) {
     switch (metaEvent) {
         case 0x00:
@@ -147,14 +149,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    unsigned char fourBytes[4];
+    readOrExit(readBuffer, 4, filePtr);
 
-    readOrExit(fourBytes, 4, filePtr);
+    printPaddedHexString(readBuffer, 4);
+    printf("\tChunk type: \"%.4s\"\n", readBuffer);
 
-    printPaddedHexString(fourBytes, 4);
-    printf("\tChunk type: \"%.4s\"\n", fourBytes);
-
-    if (strncmp(fourBytes, MTHD, 4) == 0) {
+    if (strncmp(readBuffer, MTHD, 4) == 0) {
         printf("\n# Reading header chunk\n");
     }
     else {
@@ -162,11 +162,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    readOrExit(fourBytes, 4, filePtr);
+    readOrExit(readBuffer, 4, filePtr);
 
-    unsigned int chunkLength = bigEndianToUInt(fourBytes, 4);
+    unsigned int chunkLength = bigEndianToUInt(readBuffer, 4);
 
-    printPaddedHexString(fourBytes, 4);
+    printPaddedHexString(readBuffer, 4);
 
     printf("\tChunk length: %u\n", chunkLength);
 
@@ -175,13 +175,11 @@ int main(int argc, char *argv[]) {
         printf("         I will pretend header length was 6\n");
     }
 
-    unsigned char twoBytes[2];
+    readOrExit(readBuffer, 2, filePtr);
 
-    readOrExit(twoBytes, 2, filePtr);
+    printPaddedHexString(readBuffer, 2);
 
-    printPaddedHexString(twoBytes, 2);
-
-    unsigned int format = bigEndianToUInt(twoBytes, 2);
+    unsigned int format = bigEndianToUInt(readBuffer, 2);
 
     if (format > 3) {
         printf("\nWARNING: Illegal format (%u not in {1,2,3})\n", format);
@@ -189,11 +187,11 @@ int main(int argc, char *argv[]) {
 
     printf("\tFormat: %u (%s)\n", format, FORMATS[format]);
 
-    readOrExit(twoBytes, 2, filePtr);
+    readOrExit(readBuffer, 2, filePtr);
 
-    printPaddedHexString(twoBytes, 2);
+    printPaddedHexString(readBuffer, 2);
 
-    unsigned int numTracks = bigEndianToUInt(twoBytes, 2);
+    unsigned int numTracks = bigEndianToUInt(readBuffer, 2);
 
     printf("\tNum tracks: %u\n", numTracks);
 
@@ -204,169 +202,184 @@ int main(int argc, char *argv[]) {
         printf("\nWARNING: track count was not 1 for a single-track format\n");
     }
 
-    readOrExit(twoBytes, 2, filePtr);
+    readOrExit(readBuffer, 2, filePtr);
 
-    printPaddedHexString(twoBytes, 2);
+    printPaddedHexString(readBuffer, 2);
 
     bool useSMPTE = false;
     unsigned int ticksPerQuarter;
 
-    if (twoBytes[0] & 0b10000000) {
+    if (readBuffer[0] & 0b10000000) {
         printf("\tDelta format: SMPTE (WARNING: not supported)\n");
         // TODO: support SMPTE readout
     }
     else {
         // MSB is 0 for ticks/quarter, so it doesn't affect the value
-        ticksPerQuarter = bigEndianToUInt(twoBytes, 2);
+        ticksPerQuarter = bigEndianToUInt(readBuffer, 2);
 
         printf("\tDelta format: %u ticks/quarter note\n", ticksPerQuarter);
     }
 
-    unsigned int chunkIndex = 0;
     unsigned int deltaTime = 0;
     unsigned int eventLength = 0;
     unsigned int channel = 0;
     unsigned char noBottomNybble;
     unsigned char noTopNybble;
     bool isNoteOn = false;
+    bool chunkIsTrack = false;
     int bytesRead = 0;
 
     for (int i = 0; i < numTracks; i++) {
-        readOrExit(fourBytes, 4, filePtr);
+        readOrExit(readBuffer, 4, filePtr);
 
         printf("\n\n");
-        printPaddedHexString(fourBytes, 4);
-        printf("\tChunk type: \"%.4s\"\n", fourBytes);
+        printPaddedHexString(readBuffer, 4);
+        printf("\tChunk type: \"%.4s\"\n", readBuffer);
 
-        if (strncmp(fourBytes, MTRK, 4) == 0) {
+        chunkIsTrack = (strncmp(readBuffer, MTRK, 4) == 0);
+
+        if (chunkIsTrack) {
             printf("\n# Reading track chunk\n");
         }
         else {
-            printf("\nERROR: Subsequent chunk was not a track\n");
-            return 1;
+            printf("\n# Skipping non-track chunk\n");
         }
 
-        readOrExit(fourBytes, 4, filePtr);
+        readOrExit(readBuffer, 4, filePtr);
 
-        chunkLength = bigEndianToUInt(fourBytes, 4);
+        chunkLength = bigEndianToUInt(readBuffer, 4);
 
-        printPaddedHexString(fourBytes, 4);
+        printPaddedHexString(readBuffer, 4);
 
         printf("\tChunk length: %u\n", chunkLength);
 
-        chunkIndex = 0;
-
-        while (chunkIndex < chunkLength) {
-            bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
-
-            printPaddedHexString(fourBytes, bytesRead);
-
-            deltaTime = variableLengthToUInt(fourBytes);
-
-            printf("\tDelta time: %u\n", deltaTime);
-
-            readOrExit(twoBytes, 1, filePtr);
-
-            noBottomNybble = twoBytes[0] & (unsigned char) 0xF0;
-            noTopNybble = twoBytes[0] & (unsigned char) 0x0F;
-
-            if (twoBytes[0] == 0xFF) {
-                // Meta-Event
-                readOrExit(twoBytes + 1, 1, filePtr);
-
-                printPaddedHexString(twoBytes, 2);
-
-                printf("\tMeta event (%s)\n", metaEventToString(twoBytes[1]));
-
-                bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
-
-                printPaddedHexString(fourBytes, bytesRead);
-
-                eventLength = variableLengthToUInt(fourBytes);
-
-                printf("\tMeta event contents length: %u\n", eventLength);
-
-                unsigned char metaEventContents[eventLength];
-
-                readOrExit(metaEventContents, eventLength, filePtr);
-
-                printPaddedHexString(metaEventContents, eventLength);
-
-                // TODO: format this correctly for other common event types
-                if (twoBytes[1] == 0x51) {
-                    // Set tempo
-                    printf("\t(Tempo: %u us/quarter)\n", bigEndianToUInt(metaEventContents, eventLength));
+        if (!chunkIsTrack) {
+            while (chunkLength > 0) {
+                if (chunkLength >= 4) {
+                    readOrExit(readBuffer, 4, filePtr);
                 }
                 else {
-                    printf("\t(Contents as text: \"%.*s\")\n", eventLength, metaEventContents);
+                    readOrExit(readBuffer, chunkLength, filePtr);
                 }
+                chunkLength -= 4;
+            }
+        }
+        else {
+            // We could limit this loop with chunkLength, but
+            //   1. every track is required to have a track end event, and
+            //   2. we're guaranteed to stop eventually (at the end of the file)
+            while (true) {
+                bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
-                if (twoBytes[1] == 0x2F) {
-                    printf("End of track\n");
-                    break;
+                printPaddedHexString(readBuffer, bytesRead);
+
+                deltaTime = variableLengthToUInt(readBuffer);
+
+                printf("\tDelta time: %u\n", deltaTime);
+
+                readOrExit(readBuffer, 1, filePtr);
+
+                noBottomNybble = readBuffer[0] & (unsigned char) 0xF0;
+                noTopNybble = readBuffer[0] & (unsigned char) 0x0F;
+
+                if (readBuffer[0] == 0xFF) {
+                    // Meta-Event
+                    readOrExit(readBuffer + 1, 1, filePtr);
+
+                    printPaddedHexString(readBuffer, 2);
+
+                    printf("\tMeta event (%s)\n", metaEventToString(readBuffer[1]));
+
+                    bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
+
+                    printPaddedHexString(readBuffer, bytesRead);
+
+                    eventLength = variableLengthToUInt(readBuffer);
+
+                    printf("\tMeta event contents length: %u\n", eventLength);
+
+                    unsigned char metaEventContents[eventLength];
+
+                    readOrExit(metaEventContents, eventLength, filePtr);
+
+                    printPaddedHexString(metaEventContents, eventLength);
+
+                    // TODO: format this correctly for other common event types
+                    if (readBuffer[1] == 0x51) {
+                        // Set tempo
+                        printf("\t(Tempo: %u us/quarter)\n", bigEndianToUInt(metaEventContents, eventLength));
+                    }
+                    else {
+                        printf("\t(Contents as text: \"%.*s\")\n", eventLength, metaEventContents);
+                    }
+
+                    if (readBuffer[1] == 0x2F) {
+                        printf("End of track\n");
+                        break;
+                    }
                 }
-            }
-            else if (twoBytes[0] == 0xF7 || twoBytes[0] == 0xF0) {
-                // System exclusive event
-                printPaddedHexString(twoBytes, 1);
-                printf("\tsysex event\n");
+                else if (readBuffer[0] == 0xF7 || readBuffer[0] == 0xF0) {
+                    // System exclusive event
+                    printPaddedHexString(readBuffer, 1);
+                    printf("\tsysex event\n");
 
-                bytesRead = readVariableLengthOrExit(fourBytes, filePtr);
+                    bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
-                printPaddedHexString(fourBytes, bytesRead);
+                    printPaddedHexString(readBuffer, bytesRead);
 
-                eventLength = variableLengthToUInt(fourBytes);
+                    eventLength = variableLengthToUInt(readBuffer);
 
-                printf("\tSysex event contents length: %u\n", eventLength);
+                    printf("\tSysex event contents length: %u\n", eventLength);
 
-                unsigned char eventContents[eventLength];
+                    unsigned char eventContents[eventLength];
 
-                readOrExit(eventContents, eventLength, filePtr);
+                    readOrExit(eventContents, eventLength, filePtr);
 
-                printPaddedHexString(eventContents, eventLength);
-                printf("\n");
-            }
-            else if (noBottomNybble == 0x80 || noBottomNybble == 0x90) {
-                // Note off or note on
-                channel = bigEndianToUInt(&noTopNybble, 1);
-                isNoteOn = (twoBytes[0] & 0xF0 == 0x90);
+                    printPaddedHexString(eventContents, eventLength);
+                    printf("\n");
+                }
+                else if (noBottomNybble == 0x80 || noBottomNybble == 0x90) {
+                    // Note off or note on
+                    channel = bigEndianToUInt(&noTopNybble, 1);
+                    isNoteOn = (readBuffer[0] & 0xF0 == 0x90);
 
-                printHexString(twoBytes, 1);
-                printf(" ");
-                readOrExit(twoBytes, 2, filePtr);
-                printHexString(twoBytes, 2);
+                    printHexString(readBuffer, 1);
+                    printf(" ");
+                    readOrExit(readBuffer, 2, filePtr);
+                    printHexString(readBuffer, 2);
 
-                printf(
-                    "\tNote %s: C%u N%u V%u\n",
-                    isNoteOn ? "on" : "off",
-                    channel,
-                    bigEndianToUInt(twoBytes, 1),
-                    bigEndianToUInt(twoBytes + 1, 1)
-                );
-            }
-            else if (noBottomNybble == 0xA0 || noBottomNybble == 0xB0 || noBottomNybble == 0xE0) {
-                // Two-data-byte messages
-                // Polyphonic key pressure, control change/channel mode, pitch bend change
-                channel = bigEndianToUInt(&noTopNybble, 1);
-                printHexString(twoBytes, 1);
-                printf(" ");
-                readOrExit(twoBytes, 2, filePtr);
-                printHexString(twoBytes, 2);
-                // TODO
-                printf("\tMIDI message with 2 data bytes (unimplemented)\n");
-            }
-            else if (noBottomNybble == 0xC0 || noBottomNybble == 0xD0) {
-                // One-data-byte messages
-                // Program change, channel pressure (after touch)
-                channel = bigEndianToUInt(&noTopNybble, 1);
-                readOrExit(twoBytes + 1, 1, filePtr);
-                printPaddedHexString(twoBytes, 2);
-                // TODO
-                printf("\tMIDI message with 1 data byte (unimplemented)\n");
-            }
-            else {
-                printf("ERROR: unsupported event");
-                return 1;
+                    printf(
+                        "\tNote %s: C%u N%u V%u\n",
+                        isNoteOn ? "on" : "off",
+                        channel,
+                        bigEndianToUInt(readBuffer, 1),
+                        bigEndianToUInt(readBuffer + 1, 1)
+                    );
+                }
+                else if (noBottomNybble == 0xA0 || noBottomNybble == 0xB0 || noBottomNybble == 0xE0) {
+                    // Two-data-byte messages
+                    // Polyphonic key pressure, control change/channel mode, pitch bend change
+                    channel = bigEndianToUInt(&noTopNybble, 1);
+                    printHexString(readBuffer, 1);
+                    printf(" ");
+                    readOrExit(readBuffer, 2, filePtr);
+                    printHexString(readBuffer, 2);
+                    // TODO
+                    printf("\tMIDI message with 2 data bytes (unimplemented)\n");
+                }
+                else if (noBottomNybble == 0xC0 || noBottomNybble == 0xD0) {
+                    // One-data-byte messages
+                    // Program change, channel pressure (after touch)
+                    channel = bigEndianToUInt(&noTopNybble, 1);
+                    readOrExit(readBuffer + 1, 1, filePtr);
+                    printPaddedHexString(readBuffer, 2);
+                    // TODO
+                    printf("\tMIDI message with 1 data byte (unimplemented)\n");
+                }
+                else {
+                    printf("ERROR: unsupported event");
+                    return 1;
+                }
             }
         }
     }
