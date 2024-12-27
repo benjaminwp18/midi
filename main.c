@@ -13,7 +13,7 @@
  * @param buffer buffer to write to
  * @param count number of bytes to read
  * @param stream stream to read from
- * @return true on error (fewer bytes read than requested)
+ * @return bool - true on error (fewer bytes read than requested)
  */
 bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream) {
     size_t numRead = fread(buffer, sizeof(char), count, stream);
@@ -61,6 +61,13 @@ void printPrettyHex(unsigned char *buffer, size_t length, size_t padToLength) {
     }
 }
 
+/**
+ * @brief Convert a big endian uint recorded in a buffer to an actual uint.
+ *
+ * @param bytes the buffer containing the big endian uint
+ * @param length the number of bytes to read
+ * @return unsigned int - the resulting uint
+ */
 unsigned int bigEndianToUInt(unsigned char *bytes, int length) {
     unsigned int result = 0;
     for (int i = 0; i < length; i++) {
@@ -70,6 +77,13 @@ unsigned int bigEndianToUInt(unsigned char *bytes, int length) {
     return result;
 }
 
+/**
+ * @brief Read a MIDI Variable Length Quantity from the stream into the buffer.
+ *
+ * @param destination the buffer to read into (length should be 4)
+ * @param stream the stream to read from
+ * @return int - the number of bytes read; -1 if an error was encountered
+ */
 int readVariableLength(unsigned char destination[4], FILE *stream) {
     // Variable length quantities are capped at 4 bytes
     for (int i = 0; i < 4; i++) {
@@ -84,6 +98,14 @@ int readVariableLength(unsigned char destination[4], FILE *stream) {
     }
 }
 
+/**
+ * @brief Read a MIDI Variable Length Quantity from the stream into the buffer
+ * and exit(1) on errors.
+ *
+ * @param destination the buffer to read into (length should be 4)
+ * @param stream the stream to read from
+ * @return int - the number of bytes read
+ */
 int readVariableLengthOrExit(unsigned char destination[4], FILE *stream) {
     int result = readVariableLength(destination, stream);
     if (result == -1) {
@@ -91,9 +113,17 @@ int readVariableLengthOrExit(unsigned char destination[4], FILE *stream) {
     }
 }
 
+/**
+ * @brief Convert the bytes of a MIDI Variable Length Quantity to a uint.
+ *
+ * @param bytes the bytes representing the VLQ (length must be 4)
+ * @return unsigned int - the resulting uint
+ */
 unsigned int variableLengthToUInt(unsigned char bytes[4]) {
     unsigned int result = 0;
     for (int i = 0; i < 4; i++) {
+        // 7 bits of every byte are data bytes
+        // The MSB determines whether the VLQ continues
         result <<= 7;
         result |= bytes[i] & 0b01111111;
 
@@ -115,6 +145,12 @@ static const char FORMATS[][13] = {
 
 unsigned char readBuffer[4];
 
+/**
+ * @brief Convert a meta event type byte into a string describing it.
+ *
+ * @param metaEvent the byte representing the type of the event
+ * @return const char* - a string describing the event
+ */
 const char* metaEventToString(unsigned char metaEvent) {
     switch (metaEvent) {
         case 0x00:
