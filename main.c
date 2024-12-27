@@ -7,6 +7,14 @@
 // https://www.freqsound.com/SIRA/MIDI%20Specification.pdf
 // https://metavee.github.io/midi2csv/
 
+/**
+ * @brief Read to the buffer from the stream. Log & return true on errors.
+ *
+ * @param buffer buffer to write to
+ * @param count number of bytes to read
+ * @param stream stream to read from
+ * @return true on error (fewer bytes read than requested)
+ */
 bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream) {
     size_t numRead = fread(buffer, sizeof(char), count, stream);
     if (numRead < count) {
@@ -21,23 +29,33 @@ bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream) {
     return numRead < count;
 }
 
+/**
+ * @brief Read to the buffer from the stream. Log & exit(1) on errors.
+ *
+ * @param buffer buffer to write to
+ * @param count number of bytes to read
+ * @param stream stream to read from
+ */
 void readOrExit(unsigned char *buffer, size_t count, FILE *stream) {
     if (readWithErrors(buffer, count, stream)) {
         exit(EXIT_FAILURE);
     }
 }
 
-void printHexString(unsigned char *buffer, size_t length) {
+/**
+ * @brief Print the bytes of the buffer as hex, then pad with spaces.
+ *
+ * @param buffer buffer to print
+ * @param length number of bytes to print
+ * @param padToLength length (in bytes) to pad to by adding spaces on the right
+ */
+void printPrettyHex(unsigned char *buffer, size_t length, size_t padToLength) {
     for (int i = 0; i < length; i++) {
         printf("%02hhx%s", buffer[i], i == length - 1 ? "\0" : " \0");
     }
-}
 
-void printPaddedHexString(unsigned char *buffer, size_t length) {
-    printHexString(buffer, length);
-
-    if (4 > length) {
-        for (int i = 0; i < 4 - length; i++) {
+    if (padToLength > length) {
+        for (int i = 0; i < padToLength - length; i++) {
             printf("   ");
         }
     }
@@ -151,7 +169,7 @@ int main(int argc, char *argv[]) {
 
     readOrExit(readBuffer, 4, filePtr);
 
-    printPaddedHexString(readBuffer, 4);
+    printPrettyHex(readBuffer, 4, 4);
     printf("\tChunk type: \"%.4s\"\n", readBuffer);
 
     if (strncmp(readBuffer, MTHD, 4) == 0) {
@@ -166,7 +184,7 @@ int main(int argc, char *argv[]) {
 
     unsigned int chunkLength = bigEndianToUInt(readBuffer, 4);
 
-    printPaddedHexString(readBuffer, 4);
+    printPrettyHex(readBuffer, 4, 4);
 
     printf("\tChunk length: %u\n", chunkLength);
 
@@ -177,7 +195,7 @@ int main(int argc, char *argv[]) {
 
     readOrExit(readBuffer, 2, filePtr);
 
-    printPaddedHexString(readBuffer, 2);
+    printPrettyHex(readBuffer, 2, 4);
 
     unsigned int format = bigEndianToUInt(readBuffer, 2);
 
@@ -189,7 +207,7 @@ int main(int argc, char *argv[]) {
 
     readOrExit(readBuffer, 2, filePtr);
 
-    printPaddedHexString(readBuffer, 2);
+    printPrettyHex(readBuffer, 2, 4);
 
     unsigned int numTracks = bigEndianToUInt(readBuffer, 2);
 
@@ -204,7 +222,7 @@ int main(int argc, char *argv[]) {
 
     readOrExit(readBuffer, 2, filePtr);
 
-    printPaddedHexString(readBuffer, 2);
+    printPrettyHex(readBuffer, 2, 4);
 
     bool useSMPTE = false;
     unsigned int ticksPerQuarter;
@@ -233,7 +251,7 @@ int main(int argc, char *argv[]) {
         readOrExit(readBuffer, 4, filePtr);
 
         printf("\n\n");
-        printPaddedHexString(readBuffer, 4);
+        printPrettyHex(readBuffer, 4, 4);
         printf("\tChunk type: \"%.4s\"\n", readBuffer);
 
         chunkIsTrack = (strncmp(readBuffer, MTRK, 4) == 0);
@@ -249,7 +267,7 @@ int main(int argc, char *argv[]) {
 
         chunkLength = bigEndianToUInt(readBuffer, 4);
 
-        printPaddedHexString(readBuffer, 4);
+        printPrettyHex(readBuffer, 4, 4);
 
         printf("\tChunk length: %u\n", chunkLength);
 
@@ -266,12 +284,12 @@ int main(int argc, char *argv[]) {
         }
         else {
             // We could limit this loop with chunkLength, but
-            //   1. every track is required to have a track end event, and
+            //   1. every track is required to have a track end event
             //   2. we're guaranteed to stop eventually (at the end of the file)
             while (true) {
                 bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
-                printPaddedHexString(readBuffer, bytesRead);
+                printPrettyHex(readBuffer, bytesRead, 4);
 
                 deltaTime = variableLengthToUInt(readBuffer);
 
@@ -286,13 +304,13 @@ int main(int argc, char *argv[]) {
                     // Meta-Event
                     readOrExit(readBuffer + 1, 1, filePtr);
 
-                    printPaddedHexString(readBuffer, 2);
+                    printPrettyHex(readBuffer, 2, 4);
 
                     printf("\tMeta event (%s)\n", metaEventToString(readBuffer[1]));
 
                     bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
-                    printPaddedHexString(readBuffer, bytesRead);
+                    printPrettyHex(readBuffer, bytesRead, 4);
 
                     eventLength = variableLengthToUInt(readBuffer);
 
@@ -302,7 +320,7 @@ int main(int argc, char *argv[]) {
 
                     readOrExit(metaEventContents, eventLength, filePtr);
 
-                    printPaddedHexString(metaEventContents, eventLength);
+                    printPrettyHex(metaEventContents, eventLength, 4);
 
                     // TODO: format this correctly for other common event types
                     if (readBuffer[1] == 0x51) {
@@ -320,12 +338,12 @@ int main(int argc, char *argv[]) {
                 }
                 else if (readBuffer[0] == 0xF7 || readBuffer[0] == 0xF0) {
                     // System exclusive event
-                    printPaddedHexString(readBuffer, 1);
+                    printPrettyHex(readBuffer, 1, 4);
                     printf("\tsysex event\n");
 
                     bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
-                    printPaddedHexString(readBuffer, bytesRead);
+                    printPrettyHex(readBuffer, bytesRead, 4);
 
                     eventLength = variableLengthToUInt(readBuffer);
 
@@ -335,7 +353,7 @@ int main(int argc, char *argv[]) {
 
                     readOrExit(eventContents, eventLength, filePtr);
 
-                    printPaddedHexString(eventContents, eventLength);
+                    printPrettyHex(eventContents, eventLength, 4);
                     printf("\n");
                 }
                 else if (noBottomNybble == 0x80 || noBottomNybble == 0x90) {
@@ -343,10 +361,10 @@ int main(int argc, char *argv[]) {
                     channel = bigEndianToUInt(&noTopNybble, 1);
                     isNoteOn = (readBuffer[0] & 0xF0 == 0x90);
 
-                    printHexString(readBuffer, 1);
+                    printPrettyHex(readBuffer, 1, 1);
                     printf(" ");
                     readOrExit(readBuffer, 2, filePtr);
-                    printHexString(readBuffer, 2);
+                    printPrettyHex(readBuffer, 2, 2);
 
                     printf(
                         "\tNote %s: C%u N%u V%u\n",
@@ -360,10 +378,10 @@ int main(int argc, char *argv[]) {
                     // Two-data-byte messages
                     // Polyphonic key pressure, control change/channel mode, pitch bend change
                     channel = bigEndianToUInt(&noTopNybble, 1);
-                    printHexString(readBuffer, 1);
+                    printPrettyHex(readBuffer, 1, 1);
                     printf(" ");
                     readOrExit(readBuffer, 2, filePtr);
-                    printHexString(readBuffer, 2);
+                    printPrettyHex(readBuffer, 2, 2);
                     // TODO
                     printf("\tMIDI message with 2 data bytes (unimplemented)\n");
                 }
@@ -372,7 +390,7 @@ int main(int argc, char *argv[]) {
                     // Program change, channel pressure (after touch)
                     channel = bigEndianToUInt(&noTopNybble, 1);
                     readOrExit(readBuffer + 1, 1, filePtr);
-                    printPaddedHexString(readBuffer, 2);
+                    printPrettyHex(readBuffer, 2, 4);
                     // TODO
                     printf("\tMIDI message with 1 data byte (unimplemented)\n");
                 }
