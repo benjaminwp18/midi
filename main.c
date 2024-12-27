@@ -2,27 +2,29 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 // https://www.freqsound.com/SIRA/MIDI%20Specification.pdf
 // https://metavee.github.io/midi2csv/
 
-bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream, bool EOFOK) {
+bool readWithErrors(unsigned char *buffer, size_t count, FILE *stream) {
     size_t numRead = fread(buffer, sizeof(char), count, stream);
     if (numRead < count) {
         if (feof(stream) > 0) {
-            if (EOFOK) {
-                printf("Reached acceptable end of file");
-            }
-            else {
-                fprintf(stderr, "ERROR: Unexpected end of file");
-            }
+            fprintf(stderr, "ERROR: Unexpected end of file\n");
         }
         else {
-            fprintf(stderr, "ERROR: problem reading from file");
+            fprintf(stderr, "ERROR: Problem reading from file\n");
         }
     }
 
     return numRead < count;
+}
+
+bool readOrExit(unsigned char *buffer, size_t count, FILE *stream) {
+    if (readWithErrors(buffer, count, stream)) {
+        exit(EXIT_FAILURE);
+    }
 }
 
 void printHexString(unsigned char *buffer, size_t length) {
@@ -53,7 +55,7 @@ unsigned int bigEndianToUInt(unsigned char *bytes, int length) {
 int readVariableLength(unsigned char destination[4], FILE *stream) {
     // Variable length quantities are capped at 4 bytes
     for (int i = 0; i < 4; i++) {
-        if (readWithErrors(destination + i, 1, stream, false)) {
+        if (readWithErrors(destination + i, 1, stream)) {
             return -1;
         }
 
@@ -140,9 +142,7 @@ int main(int argc, char *argv[]) {
 
     unsigned char fourBytes[4];
 
-    if (readWithErrors(fourBytes, 4, filePtr, false)) {
-        return 1;
-    }
+    readOrExit(fourBytes, 4, filePtr);
 
     printPaddedHexString(fourBytes, 4);
     printf("\tChunk type: \"%.4s\"\n", fourBytes);
@@ -155,9 +155,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (readWithErrors(fourBytes, 4, filePtr, false)) {
-        return 1;
-    }
+    readOrExit(fourBytes, 4, filePtr);
 
     unsigned int chunkLength = bigEndianToUInt(fourBytes, 4);
 
@@ -172,9 +170,7 @@ int main(int argc, char *argv[]) {
 
     unsigned char twoBytes[2];
 
-    if (readWithErrors(twoBytes, 2, filePtr, false)) {
-        return 1;
-    }
+    readOrExit(twoBytes, 2, filePtr);
 
     printPaddedHexString(twoBytes, 2);
 
@@ -186,9 +182,7 @@ int main(int argc, char *argv[]) {
 
     printf("\tFormat: %u (%s)\n", format, FORMATS[format]);
 
-    if (readWithErrors(twoBytes, 2, filePtr, false)) {
-        return 1;
-    }
+    readOrExit(twoBytes, 2, filePtr);
 
     printPaddedHexString(twoBytes, 2);
 
@@ -203,9 +197,7 @@ int main(int argc, char *argv[]) {
         printf("\nWARNING: track count was not 1 for a single-track format\n");
     }
 
-    if (readWithErrors(twoBytes, 2, filePtr, false)) {
-        return 1;
-    }
+    readOrExit(twoBytes, 2, filePtr);
 
     printPaddedHexString(twoBytes, 2);
 
@@ -233,9 +225,7 @@ int main(int argc, char *argv[]) {
     int bytesRead = 0;
 
     for (int i = 0; i < numTracks; i++) {
-        if (readWithErrors(fourBytes, 4, filePtr, false)) {
-            return 1;
-        }
+        readOrExit(fourBytes, 4, filePtr);
 
         printf("\n\n");
         printPaddedHexString(fourBytes, 4);
@@ -249,9 +239,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        if (readWithErrors(fourBytes, 4, filePtr, false)) {
-            return 1;
-        }
+        readOrExit(fourBytes, 4, filePtr);
 
         chunkLength = bigEndianToUInt(fourBytes, 4);
 
@@ -273,18 +261,14 @@ int main(int argc, char *argv[]) {
 
             printf("\tDelta time: %u\n", deltaTime);
 
-            if (readWithErrors(twoBytes, 1, filePtr, false)) {
-                return 1;
-            }
+            readOrExit(twoBytes, 1, filePtr);
 
             noBottomNybble = twoBytes[0] & (unsigned char) 0xF0;
             noTopNybble = twoBytes[0] & (unsigned char) 0x0F;
 
             if (twoBytes[0] == 0xFF) {
                 // Meta-Event
-                if (readWithErrors(twoBytes + 1, 1, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(twoBytes + 1, 1, filePtr);
 
                 printPaddedHexString(twoBytes, 2);
 
@@ -303,9 +287,7 @@ int main(int argc, char *argv[]) {
 
                 unsigned char metaEventContents[eventLength];
 
-                if (readWithErrors(metaEventContents, eventLength, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(metaEventContents, eventLength, filePtr);
 
                 printPaddedHexString(metaEventContents, eventLength);
 
@@ -341,9 +323,7 @@ int main(int argc, char *argv[]) {
 
                 unsigned char eventContents[eventLength];
 
-                if (readWithErrors(eventContents, eventLength, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(eventContents, eventLength, filePtr);
 
                 printPaddedHexString(eventContents, eventLength);
                 printf("\n");
@@ -355,9 +335,7 @@ int main(int argc, char *argv[]) {
 
                 printHexString(twoBytes, 1);
                 printf(" ");
-                if (readWithErrors(twoBytes, 2, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(twoBytes, 2, filePtr);
                 printHexString(twoBytes, 2);
 
                 printf(
@@ -374,9 +352,7 @@ int main(int argc, char *argv[]) {
                 channel = bigEndianToUInt(&noTopNybble, 1);
                 printHexString(twoBytes, 1);
                 printf(" ");
-                if (readWithErrors(twoBytes, 2, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(twoBytes, 2, filePtr);
                 printHexString(twoBytes, 2);
                 // TODO
                 printf("\tMIDI message with 2 data bytes (unimplemented)\n");
@@ -385,9 +361,7 @@ int main(int argc, char *argv[]) {
                 // One-data-byte messages
                 // Program change, channel pressure (after touch)
                 channel = bigEndianToUInt(&noTopNybble, 1);
-                if (readWithErrors(twoBytes + 1, 1, filePtr, false)) {
-                    return 1;
-                }
+                readOrExit(twoBytes + 1, 1, filePtr);
                 printPaddedHexString(twoBytes, 2);
                 // TODO
                 printf("\tMIDI message with 1 data byte (unimplemented)\n");
