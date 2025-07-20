@@ -200,164 +200,15 @@ const char* metaEventToString(unsigned char metaEvent) {
     }
 }
 
-const char* INSTRUMENT_NAMES[] = {
-    "banjo",
-    "basedrum",
-    "bass",
-    "bell",
-    "bit",
-    "chime",
-    "cow_bell",
-    "didgeridoo",
-    "flute",
-    "guitar",
-    "harp",
-    "iron_xylophone",
-    "pling",
-    "snare",
-    "xylophone",
+typedef struct callbacksStruct Callbacks;
+
+struct callbacksStruct {
+    void (*onDelay)(unsigned int deltaTime);
+    void (*onNote)(bool on, unsigned int channel, unsigned int note, unsigned int velocity);
+    void (*onTrackEnd)();
 };
 
-const char* INSTRUMENT_BLOCKS[] = {
-    "hay_block",
-    "stone",
-    "cherry_planks",
-    "gold_block",
-    "emerald_block",
-    "packed_ice",
-    "soul_sand",
-    "pumpkin",
-    "clay",
-    "wool",
-    "waxed_copper_block",
-    "iron_block",
-    "glowstone",
-    "sand",
-    "bone_block"
-};
-
-const unsigned int INSTRUMENT_RANGE = 24;
-
-const unsigned int INSTRUMENT_RANGE_STARTS[] = {
-    54, // banjo
-    0, // basedrum
-    30, // bass (f#1)
-    78, // bell
-    54, // bit
-    78, // chime
-    66, // cow_bell
-    30, // didgeridoo (f#1)
-    66, // flute
-    42, // guitar
-    54, // harp/piano
-    54, // iron_xylophone
-    54, // pling
-    0, // snare
-    78, // xylophone
-};
-
-const size_t CHANNEL_INSTRUMENTS[] = {10, 10, 10, 10};
-
-unsigned int DELAY_DIVISOR = 120;  // 48
-
-unsigned int xPos = 0;
-unsigned int zPos = 0;
-
-unsigned int runningDelay = 0;
-bool trackHasNotes = false;
-unsigned int notesInChord = 0;
-
-void delayEvent(unsigned int deltaTime) {
-    runningDelay += deltaTime;
-}
-
-void noteOnEvent(unsigned int channel, unsigned int note, unsigned int velocity) {
-    trackHasNotes = true;
-
-    // printf("# Notes in chord: %u\n", notesInChord);
-
-    // Quantize & flush delay
-    if (runningDelay >= DELAY_DIVISOR) {
-        while (runningDelay > 4 * DELAY_DIVISOR) {
-            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, 4);
-            zPos += 1;
-            runningDelay -= 4 * DELAY_DIVISOR;
-        }
-        if (runningDelay / DELAY_DIVISOR > 0) {
-            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, runningDelay / DELAY_DIVISOR);
-            zPos += 1;
-        }
-
-        runningDelay = 0;
-        notesInChord = 0;
-    }
-
-    // Move note to octave in range
-    size_t instrIndex = CHANNEL_INSTRUMENTS[channel];
-    unsigned int rangeStart = INSTRUMENT_RANGE_STARTS[instrIndex];
-    unsigned int rangeEnd = INSTRUMENT_RANGE_STARTS[instrIndex] + INSTRUMENT_RANGE;
-
-    if (note < rangeStart) {
-        unsigned int distToRange = rangeStart - note;
-        if (distToRange % 12 > 0) {
-            note += (distToRange / 12 + 1) * 12;
-        }
-    }
-
-    if (rangeEnd < note) {
-        unsigned int distToRange = note - rangeEnd;
-        if (distToRange % 12 > 0) {
-            note -= (distToRange / 12 + 1) * 12;
-        }
-    }
-
-    // Write note
-    if (rangeStart <= note && note <= rangeEnd) {
-        unsigned int x = xPos;
-        if (notesInChord == 1) {
-            x += 1;
-        }
-        else if (notesInChord == 2) {
-            x -= 1;
-        }
-        else if (notesInChord > 2) {
-            return;
-        }
-
-        // Cancel previous step forward now that we know it's a chord
-        if (notesInChord > 0) {
-            zPos -= 1;
-        }
-
-        printf(
-            "setblock ~%u ~-1 ~%u minecraft:%s\n",
-            x,
-            zPos,
-            INSTRUMENT_BLOCKS[instrIndex]
-        );
-        printf(
-            "setblock ~%u ~ ~%u minecraft:note_block[instrument=%s,note=%u]\n",
-            x,
-            zPos,
-            INSTRUMENT_NAMES[instrIndex],
-            note - INSTRUMENT_RANGE_STARTS[instrIndex]
-        );
-        zPos += 1;
-        notesInChord += 1;
-    }
-    // printf("Note on: C%u N%u V%u\n", channel, note, velocity);
-}
-
-void endOfTrackEvent() {
-    runningDelay = 0;
-    notesInChord = 0;
-    if (trackHasNotes) {
-        xPos += 3;
-    }
-    zPos = 0;
-}
-
-int process(FILE *filePtr) {
+int process(FILE *filePtr, Callbacks *callbacks) {
     readOrExit(readBuffer, 4, filePtr);
 
     debugPrettyHex(readBuffer, 4, 4);
@@ -487,7 +338,7 @@ int process(FILE *filePtr) {
                 DEBUGF("\tDelta time: %u\n", deltaTime);
 
                 if (CUSTOM_EVENTS) {
-                    delayEvent(deltaTime);
+                    callbacks->onDelay(deltaTime);
                 }
 
                 readOrExit(readBuffer, 1, filePtr);
@@ -531,7 +382,7 @@ int process(FILE *filePtr) {
                     if (readBuffer[1] == 0x2F) {
                         DEBUGF("End of track\n");
                         if (CUSTOM_EVENTS) {
-                            endOfTrackEvent();
+                            callbacks->onTrackEnd();
                         }
                         break;
                     }
@@ -577,7 +428,7 @@ int process(FILE *filePtr) {
                     );
 
                     if (CUSTOM_EVENTS && isNoteOn) {
-                        noteOnEvent(channel, note, velocity);
+                        callbacks->onNote(isNoteOn, channel, note, velocity);
                     }
                 }
                 else if (noBottomNybble == 0xA0 || noBottomNybble == 0xB0 || noBottomNybble == 0xE0) {
