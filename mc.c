@@ -66,10 +66,10 @@ const unsigned int INSTRUMENT_RANGE_STARTS[] = {
 
 const size_t CHANNEL_INSTRUMENTS[] = {10, 10, 10, 10};
 
-const unsigned int DELAY_DIVISOR = 120;  // 48
+const unsigned int DELAY_DIVISOR = 96;  // 48
 
-unsigned int xPos = 0;
-unsigned int zPos = 0;
+int xPos = 0;
+int zPos = 0;
 
 unsigned int runningDelay = 0;
 bool trackHasNotes = false;
@@ -90,12 +90,12 @@ void onNote(bool on, unsigned int channel, unsigned int note, unsigned int veloc
     // Quantize & flush delay
     if (runningDelay >= DELAY_DIVISOR) {
         while (runningDelay > 4 * DELAY_DIVISOR) {
-            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, 4);
+            printf("setblock ~%d ~ ~%d minecraft:repeater[delay=%u]\n", xPos, zPos, 4);
             zPos += 1;
             runningDelay -= 4 * DELAY_DIVISOR;
         }
         if (runningDelay / DELAY_DIVISOR > 0) {
-            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, runningDelay / DELAY_DIVISOR);
+            printf("setblock ~%d ~ ~%d minecraft:repeater[delay=%u]\n", xPos, zPos, runningDelay / DELAY_DIVISOR);
             zPos += 1;
         }
 
@@ -124,7 +124,7 @@ void onNote(bool on, unsigned int channel, unsigned int note, unsigned int veloc
 
     // Write note
     if (rangeStart <= note && note <= rangeEnd) {
-        unsigned int x = xPos;
+        int x = xPos;
         if (notesInChord == 1) {
             x += 1;
         }
@@ -141,13 +141,13 @@ void onNote(bool on, unsigned int channel, unsigned int note, unsigned int veloc
         }
 
         printf(
-            "setblock ~%u ~-1 ~%u minecraft:%s\n",
+            "setblock ~%d ~-1 ~%d minecraft:%s\n",
             x,
             zPos,
             INSTRUMENT_BLOCKS[instrIndex]
         );
         printf(
-            "setblock ~%u ~ ~%u minecraft:note_block[instrument=%s,note=%u]\n",
+            "setblock ~%d ~ ~%d minecraft:note_block[instrument=%s,note=%u]\n",
             x,
             zPos,
             INSTRUMENT_NAMES[instrIndex],
@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    FILE *filePtr = fopen(argv[1], "r");
+    FILE *filePtr = fopen(argv[1], "rb");
 
     if (filePtr == NULL) {
         fprintf(stderr, "ERROR: Failed to open MIDI file. Please specify MIDI file path.\n");

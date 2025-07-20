@@ -414,7 +414,12 @@ int readMIDI(FILE *filePtr, Callbacks *callbacks) {
                     debugPrettyHex(readBuffer, 2, 2);
 
                     unsigned int note = bigEndianToUInt(readBuffer, 1);
-                    unsigned int velocity = bigEndianToUInt(readBuffer + 1, 1);;
+                    unsigned int velocity = bigEndianToUInt(readBuffer + 1, 1);
+
+                    // Some MIDI files call note on with velocity 0 instead of note off
+                    if (velocity == 0) {
+                        isNoteOn = false;
+                    }
 
                     DEBUGF(
                         "\tNote %s: C%u N%u V%u\n",
