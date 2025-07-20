@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// #define DEBUG
+
 #include "midi.c"
 
 const char* INSTRUMENT_NAMES[] = {
@@ -183,7 +185,7 @@ int main(int argc, char *argv[]) {
     callbacks.onNote = onNote;
     callbacks.onTrackEnd = onTrackEnd;
 
-    process(filePtr, &callbacks);
+    readMIDI(filePtr, &callbacks);
 
     return 0;
 }

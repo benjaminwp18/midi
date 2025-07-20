@@ -7,9 +7,6 @@
 // https://www.freqsound.com/SIRA/MIDI%20Specification.pdf
 // https://metavee.github.io/midi2csv/
 
-// #define DEBUG
-#define CUSTOM_EVENTS true
-
 #ifdef DEBUG
 #define DEBUGF printf
 #else
@@ -208,7 +205,7 @@ struct callbacksStruct {
     void (*onTrackEnd)();
 };
 
-int process(FILE *filePtr, Callbacks *callbacks) {
+int readMIDI(FILE *filePtr, Callbacks *callbacks) {
     readOrExit(readBuffer, 4, filePtr);
 
     debugPrettyHex(readBuffer, 4, 4);
@@ -337,7 +334,7 @@ int process(FILE *filePtr, Callbacks *callbacks) {
 
                 DEBUGF("\tDelta time: %u\n", deltaTime);
 
-                if (CUSTOM_EVENTS) {
+                if (callbacks && callbacks->onDelay) {
                     callbacks->onDelay(deltaTime);
                 }
 
@@ -381,7 +378,7 @@ int process(FILE *filePtr, Callbacks *callbacks) {
 
                     if (readBuffer[1] == 0x2F) {
                         DEBUGF("End of track\n");
-                        if (CUSTOM_EVENTS) {
+                        if (callbacks && callbacks->onTrackEnd) {
                             callbacks->onTrackEnd();
                         }
                         break;
@@ -427,7 +424,7 @@ int process(FILE *filePtr, Callbacks *callbacks) {
                         velocity
                     );
 
-                    if (CUSTOM_EVENTS && isNoteOn) {
+                    if (callbacks && callbacks->onNote) {
                         callbacks->onNote(isNoteOn, channel, note, velocity);
                     }
                 }
