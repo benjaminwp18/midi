@@ -7,13 +7,14 @@
 // https://www.freqsound.com/SIRA/MIDI%20Specification.pdf
 // https://metavee.github.io/midi2csv/
 
-#define DEBUG false
+// #define DEBUG
+#define CUSTOM_EVENTS true
 
-int debugf(const char *__format, ...) {
-    if (DEBUG) {
-        return printf(__format);
-    }
-}
+#ifdef DEBUG
+#define DEBUGF printf
+#else
+#define DEBUGF
+#endif
 
 /**
  * @brief Read to the buffer from the stream. Log & return true on errors.
@@ -59,12 +60,12 @@ void readOrExit(unsigned char *buffer, size_t count, FILE *stream) {
  */
 void debugPrettyHex(unsigned char *buffer, size_t length, size_t padToLength) {
     for (int i = 0; i < length; i++) {
-        debugf("%02hhx%s", buffer[i], i == length - 1 ? "\0" : " \0");
+        DEBUGF("%02hhx%s", buffer[i], i == length - 1 ? "\0" : " \0");
     }
 
     if (padToLength > length) {
         for (int i = 0; i < padToLength - length; i++) {
-            debugf("   ");
+            DEBUGF("   ");
         }
     }
 }
@@ -104,6 +105,8 @@ int readVariableLength(unsigned char destination[4], FILE *stream) {
             return i + 1;
         }
     }
+
+    return 4;
 }
 
 /**
@@ -119,6 +122,7 @@ int readVariableLengthOrExit(unsigned char destination[4], FILE *stream) {
     if (result == -1) {
         exit(EXIT_FAILURE);
     }
+    return result;
 }
 
 /**
@@ -196,28 +200,171 @@ const char* metaEventToString(unsigned char metaEvent) {
     }
 }
 
-int main(int argc, char *argv[]) {
-    int i = 0;
+const char* INSTRUMENT_NAMES[] = {
+    "banjo",
+    "basedrum",
+    "bass",
+    "bell",
+    "bit",
+    "chime",
+    "cow_bell",
+    "didgeridoo",
+    "flute",
+    "guitar",
+    "harp",
+    "iron_xylophone",
+    "pling",
+    "snare",
+    "xylophone",
+};
 
-    if (argc != 2) {
-        fprintf(stderr, "ERROR: Got %d command line arguments; 1 expected. Please specify MIDI file path.\n", argc - 1);
-        return 1;
+const char* INSTRUMENT_BLOCKS[] = {
+    "hay_block",
+    "stone",
+    "cherry_planks",
+    "gold_block",
+    "emerald_block",
+    "packed_ice",
+    "soul_sand",
+    "pumpkin",
+    "clay",
+    "wool",
+    "waxed_copper_block",
+    "iron_block",
+    "glowstone",
+    "sand",
+    "bone_block"
+};
+
+const unsigned int INSTRUMENT_RANGE = 24;
+
+const unsigned int INSTRUMENT_RANGE_STARTS[] = {
+    54, // banjo
+    0, // basedrum
+    30, // bass (f#1)
+    78, // bell
+    54, // bit
+    78, // chime
+    66, // cow_bell
+    30, // didgeridoo (f#1)
+    66, // flute
+    42, // guitar
+    54, // harp/piano
+    54, // iron_xylophone
+    54, // pling
+    0, // snare
+    78, // xylophone
+};
+
+const size_t CHANNEL_INSTRUMENTS[] = {10, 10, 10, 10};
+
+unsigned int DELAY_DIVISOR = 120;  // 48
+
+unsigned int xPos = 0;
+unsigned int zPos = 0;
+
+unsigned int runningDelay = 0;
+bool trackHasNotes = false;
+unsigned int notesInChord = 0;
+
+void delayEvent(unsigned int deltaTime) {
+    runningDelay += deltaTime;
+}
+
+void noteOnEvent(unsigned int channel, unsigned int note, unsigned int velocity) {
+    trackHasNotes = true;
+
+    // printf("# Notes in chord: %u\n", notesInChord);
+
+    // Quantize & flush delay
+    if (runningDelay >= DELAY_DIVISOR) {
+        while (runningDelay > 4 * DELAY_DIVISOR) {
+            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, 4);
+            zPos += 1;
+            runningDelay -= 4 * DELAY_DIVISOR;
+        }
+        if (runningDelay / DELAY_DIVISOR > 0) {
+            printf("setblock ~%u ~ ~%u minecraft:repeater[delay=%u]\n", xPos, zPos, runningDelay / DELAY_DIVISOR);
+            zPos += 1;
+        }
+
+        runningDelay = 0;
+        notesInChord = 0;
     }
 
-    FILE *filePtr = fopen(argv[1], "r");
+    // Move note to octave in range
+    size_t instrIndex = CHANNEL_INSTRUMENTS[channel];
+    unsigned int rangeStart = INSTRUMENT_RANGE_STARTS[instrIndex];
+    unsigned int rangeEnd = INSTRUMENT_RANGE_STARTS[instrIndex] + INSTRUMENT_RANGE;
 
-    if (filePtr == NULL) {
-        fprintf(stderr, "ERROR: Failed to open MIDI file. Please specify MIDI file path.\n");
-        return 1;
+    if (note < rangeStart) {
+        unsigned int distToRange = rangeStart - note;
+        if (distToRange % 12 > 0) {
+            note += (distToRange / 12 + 1) * 12;
+        }
     }
 
+    if (rangeEnd < note) {
+        unsigned int distToRange = note - rangeEnd;
+        if (distToRange % 12 > 0) {
+            note -= (distToRange / 12 + 1) * 12;
+        }
+    }
+
+    // Write note
+    if (rangeStart <= note && note <= rangeEnd) {
+        unsigned int x = xPos;
+        if (notesInChord == 1) {
+            x += 1;
+        }
+        else if (notesInChord == 2) {
+            x -= 1;
+        }
+        else if (notesInChord > 2) {
+            return;
+        }
+
+        // Cancel previous step forward now that we know it's a chord
+        if (notesInChord > 0) {
+            zPos -= 1;
+        }
+
+        printf(
+            "setblock ~%u ~-1 ~%u minecraft:%s\n",
+            x,
+            zPos,
+            INSTRUMENT_BLOCKS[instrIndex]
+        );
+        printf(
+            "setblock ~%u ~ ~%u minecraft:note_block[instrument=%s,note=%u]\n",
+            x,
+            zPos,
+            INSTRUMENT_NAMES[instrIndex],
+            note - INSTRUMENT_RANGE_STARTS[instrIndex]
+        );
+        zPos += 1;
+        notesInChord += 1;
+    }
+    // printf("Note on: C%u N%u V%u\n", channel, note, velocity);
+}
+
+void endOfTrackEvent() {
+    runningDelay = 0;
+    notesInChord = 0;
+    if (trackHasNotes) {
+        xPos += 3;
+    }
+    zPos = 0;
+}
+
+int process(FILE *filePtr) {
     readOrExit(readBuffer, 4, filePtr);
 
     debugPrettyHex(readBuffer, 4, 4);
-    debugf("\tChunk type: \"%.4s\"\n", readBuffer);
+    DEBUGF("\tChunk type: \"%.4s\"\n", readBuffer);
 
     if (strncmp(readBuffer, MTHD, 4) == 0) {
-        debugf("\n# Reading header chunk\n");
+        DEBUGF("\n# Reading header chunk\n");
     }
     else {
         fprintf(stderr, "ERROR: First chunk was not header\n");
@@ -230,11 +377,11 @@ int main(int argc, char *argv[]) {
 
     debugPrettyHex(readBuffer, 4, 4);
 
-    debugf("\tChunk length: %u\n", chunkLength);
+    DEBUGF("\tChunk length: %u\n", chunkLength);
 
     if (chunkLength != 6) {
-        debugf("WARNING: Header chunk had invalid length (%u != 6)\n", chunkLength);
-        debugf("         I will pretend header length was 6\n");
+        DEBUGF("WARNING: Header chunk had invalid length (%u != 6)\n", chunkLength);
+        DEBUGF("         I will pretend header length was 6\n");
     }
 
     readOrExit(readBuffer, 2, filePtr);
@@ -244,10 +391,10 @@ int main(int argc, char *argv[]) {
     unsigned int format = bigEndianToUInt(readBuffer, 2);
 
     if (format > 3) {
-        debugf("\nWARNING: Illegal format (%u not in {1,2,3})\n", format);
+        DEBUGF("\nWARNING: Illegal format (%u not in {1,2,3})\n", format);
     }
 
-    debugf("\tFormat: %u (%s)\n", format, FORMATS[format]);
+    DEBUGF("\tFormat: %u (%s)\n", format, FORMATS[format]);
 
     readOrExit(readBuffer, 2, filePtr);
 
@@ -255,13 +402,13 @@ int main(int argc, char *argv[]) {
 
     unsigned int numTracks = bigEndianToUInt(readBuffer, 2);
 
-    debugf("\tNum tracks: %u\n", numTracks);
+    DEBUGF("\tNum tracks: %u\n", numTracks);
 
     if (numTracks < 1) {
-        debugf("\nWARNING: track count of 0 specified\n");
+        DEBUGF("\nWARNING: track count of 0 specified\n");
     }
     else if (format == 0 && numTracks != 1) {
-        debugf("\nWARNING: track count was not 1 for a single-track format\n");
+        DEBUGF("\nWARNING: track count was not 1 for a single-track format\n");
     }
 
     readOrExit(readBuffer, 2, filePtr);
@@ -272,14 +419,14 @@ int main(int argc, char *argv[]) {
     unsigned int ticksPerQuarter;
 
     if (readBuffer[0] & 0b10000000) {
-        debugf("\tDelta format: SMPTE (WARNING: not supported)\n");
+        DEBUGF("\tDelta format: SMPTE (WARNING: not supported)\n");
         // TODO: support SMPTE readout
     }
     else {
         // MSB is 0 for ticks/quarter, so it doesn't affect the value
         ticksPerQuarter = bigEndianToUInt(readBuffer, 2);
 
-        debugf("\tDelta format: %u ticks/quarter note\n", ticksPerQuarter);
+        DEBUGF("\tDelta format: %u ticks/quarter note\n", ticksPerQuarter);
     }
 
     unsigned int deltaTime = 0;
@@ -291,20 +438,20 @@ int main(int argc, char *argv[]) {
     bool chunkIsTrack = false;
     int bytesRead = 0;
 
-    for (int i = 0; i < numTracks; i++) {
+    for (unsigned int i = 0; i < numTracks; i++) {
         readOrExit(readBuffer, 4, filePtr);
 
-        debugf("\n\n");
+        DEBUGF("\n\n");
         debugPrettyHex(readBuffer, 4, 4);
-        debugf("\tChunk type: \"%.4s\"\n", readBuffer);
+        DEBUGF("\tChunk type: \"%.4s\"\n", readBuffer);
 
         chunkIsTrack = (strncmp(readBuffer, MTRK, 4) == 0);
 
         if (chunkIsTrack) {
-            debugf("\n# Reading track chunk\n");
+            DEBUGF("\n# Reading track chunk\n");
         }
         else {
-            debugf("\n# Skipping non-track chunk\n");
+            DEBUGF("\n# Skipping non-track chunk\n");
         }
 
         readOrExit(readBuffer, 4, filePtr);
@@ -313,7 +460,7 @@ int main(int argc, char *argv[]) {
 
         debugPrettyHex(readBuffer, 4, 4);
 
-        debugf("\tChunk length: %u\n", chunkLength);
+        DEBUGF("\tChunk length: %u\n", chunkLength);
 
         if (!chunkIsTrack) {
             while (chunkLength > 0) {
@@ -337,7 +484,11 @@ int main(int argc, char *argv[]) {
 
                 deltaTime = variableLengthToUInt(readBuffer);
 
-                debugf("\tDelta time: %u\n", deltaTime);
+                DEBUGF("\tDelta time: %u\n", deltaTime);
+
+                if (CUSTOM_EVENTS) {
+                    delayEvent(deltaTime);
+                }
 
                 readOrExit(readBuffer, 1, filePtr);
 
@@ -350,7 +501,7 @@ int main(int argc, char *argv[]) {
 
                     debugPrettyHex(readBuffer, 2, 4);
 
-                    debugf("\tMeta event (%s)\n", metaEventToString(readBuffer[1]));
+                    DEBUGF("\tMeta event (%s)\n", metaEventToString(readBuffer[1]));
 
                     bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
@@ -358,9 +509,9 @@ int main(int argc, char *argv[]) {
 
                     eventLength = variableLengthToUInt(readBuffer);
 
-                    debugf("\tMeta event contents length: %u\n", eventLength);
+                    DEBUGF("\tMeta event contents length: %u\n", eventLength);
 
-                    unsigned char metaEventContents[eventLength];
+                    unsigned char *metaEventContents = (unsigned char *) malloc(eventLength * sizeof(unsigned char));
 
                     readOrExit(metaEventContents, eventLength, filePtr);
 
@@ -369,21 +520,26 @@ int main(int argc, char *argv[]) {
                     // TODO: format this correctly for other common event types
                     if (readBuffer[1] == 0x51) {
                         // Set tempo
-                        debugf("\t(Tempo: %u us/quarter)\n", bigEndianToUInt(metaEventContents, eventLength));
+                        DEBUGF("\t(Tempo: %u us/quarter)\n", bigEndianToUInt(metaEventContents, eventLength));
                     }
                     else {
-                        debugf("\t(Contents as text: \"%.*s\")\n", eventLength, metaEventContents);
+                        DEBUGF("\t(Contents as text: \"%.*s\")\n", eventLength, metaEventContents);
                     }
 
+                    free(metaEventContents);
+
                     if (readBuffer[1] == 0x2F) {
-                        debugf("End of track\n");
+                        DEBUGF("End of track\n");
+                        if (CUSTOM_EVENTS) {
+                            endOfTrackEvent();
+                        }
                         break;
                     }
                 }
                 else if (readBuffer[0] == 0xF7 || readBuffer[0] == 0xF0) {
                     // System exclusive event
                     debugPrettyHex(readBuffer, 1, 4);
-                    debugf("\tsysex event\n");
+                    DEBUGF("\tsysex event\n");
 
                     bytesRead = readVariableLengthOrExit(readBuffer, filePtr);
 
@@ -391,29 +547,28 @@ int main(int argc, char *argv[]) {
 
                     eventLength = variableLengthToUInt(readBuffer);
 
-                    debugf("\tSysex event contents length: %u\n", eventLength);
+                    DEBUGF("\tSysex event contents length: %u\n", eventLength);
 
-                    unsigned char eventContents[eventLength];
+                    unsigned char *eventContents = (unsigned char *) malloc(eventLength * sizeof(unsigned char));
 
                     readOrExit(eventContents, eventLength, filePtr);
 
                     debugPrettyHex(eventContents, eventLength, 4);
-                    debugf("\n");
+                    DEBUGF("\n");
                 }
                 else if (noBottomNybble == 0x80 || noBottomNybble == 0x90) {
                     // Note off or note on
                     channel = bigEndianToUInt(&noTopNybble, 1);
-                    isNoteOn = (readBuffer[0] & 0xF0 == 0x90);
+                    isNoteOn = (noBottomNybble == 0x90);
 
                     debugPrettyHex(readBuffer, 1, 1);
-                    debugf(" ");
                     readOrExit(readBuffer, 2, filePtr);
                     debugPrettyHex(readBuffer, 2, 2);
 
                     unsigned int note = bigEndianToUInt(readBuffer, 1);
-                    unsigned int velocity = bigEndianToUInt(readBuffer + 1, 1);
+                    unsigned int velocity = bigEndianToUInt(readBuffer + 1, 1);;
 
-                    debugf(
+                    DEBUGF(
                         "\tNote %s: C%u N%u V%u\n",
                         isNoteOn ? "on" : "off",
                         channel,
@@ -421,18 +576,20 @@ int main(int argc, char *argv[]) {
                         velocity
                     );
 
-                    noteOnEvent(channel, note, velocity);
+                    if (CUSTOM_EVENTS && isNoteOn) {
+                        noteOnEvent(channel, note, velocity);
+                    }
                 }
                 else if (noBottomNybble == 0xA0 || noBottomNybble == 0xB0 || noBottomNybble == 0xE0) {
                     // Two-data-byte messages
                     // Polyphonic key pressure, control change/channel mode, pitch bend change
                     channel = bigEndianToUInt(&noTopNybble, 1);
                     debugPrettyHex(readBuffer, 1, 1);
-                    debugf(" ");
+                    DEBUGF(" ");
                     readOrExit(readBuffer, 2, filePtr);
                     debugPrettyHex(readBuffer, 2, 2);
                     // TODO
-                    debugf("\tMIDI message with 2 data bytes (unimplemented)\n");
+                    DEBUGF("\tMIDI message with 2 data bytes (unimplemented)\n");
                 }
                 else if (noBottomNybble == 0xC0 || noBottomNybble == 0xD0) {
                     // One-data-byte messages
@@ -441,7 +598,7 @@ int main(int argc, char *argv[]) {
                     readOrExit(readBuffer + 1, 1, filePtr);
                     debugPrettyHex(readBuffer, 2, 4);
                     // TODO
-                    debugf("\tMIDI message with 1 data byte (unimplemented)\n");
+                    DEBUGF("\tMIDI message with 1 data byte (unimplemented)\n");
                 }
                 else {
                     printf("ERROR: unsupported event");
